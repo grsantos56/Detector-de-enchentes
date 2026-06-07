@@ -11,8 +11,9 @@
 char ssid[] = "Casa_2.4";
 char pass[] = "misquici";
 
-const float LATITUDE = -23.5505;
-const float LONGITUDE = -46.6333;
+const float LATITUDE = -5.0892;
+const float LONGITUDE = -42.8019;
+const char CIDADE_MONITORADA[] = "Teresina - PI";
 
 const int PINO_TRIG = 4;
 const int PINO_ECHO = 2;
@@ -20,25 +21,31 @@ const int PINO_ECHO = 2;
 const int PINO_LED = 5;
 const int PINO_BUZZER = 18;
 
-const float DISTANCIA_ALERTA_LEVE_CM = 250.0;
-const float DISTANCIA_ALERTA_MEDIO_CM = 150.0;
-const float DISTANCIA_ALERTA_EXTREMO_CM = 75.0;
+const bool MODO_TESTE_VASILHA = true;
 
-const float DISTANCIA_RECUPERA_LEVE_CM = 280.0;
-const float DISTANCIA_RECUPERA_MEDIO_CM = 180.0;
-const float DISTANCIA_RECUPERA_EXTREMO_CM = 110.0;
+const float DISTANCIA_ALERTA_LEVE_CM = 15.0;
+const float DISTANCIA_ALERTA_MEDIO_CM = 10.0;
+const float DISTANCIA_ALERTA_EXTREMO_CM = 5.0;
+
+const float DISTANCIA_RECUPERA_LEVE_CM = 17.0;
+const float DISTANCIA_RECUPERA_MEDIO_CM = 12.0;
+const float DISTANCIA_RECUPERA_EXTREMO_CM = 7.0;
+const float DISTANCIA_MAXIMA_TESTE_CM = 35.0;
 
 const float VELOCIDADE_ALERTA_LEVE_CM_S = 0.02;
 const float VELOCIDADE_ALERTA_MEDIO_CM_S = 0.08;
 const float VELOCIDADE_ALERTA_EXTREMO_CM_S = 0.17;
+const float VELOCIDADE_MAXIMA_TESTE_CM_MIN = 20.0;
+const float VELOCIDADE_MAXIMA_TESTE_CM_S = VELOCIDADE_MAXIMA_TESTE_CM_MIN / 60.0;
+const float VELOCIDADE_MINIMA_EXIBICAO_CM_MIN = 0.05;
 
 const int TOTAL_LEITURAS = 5;
 const float PESO_FILTRO_VELOCIDADE = 0.35;
-const float VARIACAO_MINIMA_CM = 0.5;
-const unsigned long INTERVALO_VELOCIDADE_MS = 10UL * 1000UL;
+const float VARIACAO_MINIMA_CM = 0.2;
+const unsigned long INTERVALO_VELOCIDADE_MS = 2UL * 1000UL;
 const unsigned long TEMPO_SEM_SUBIR_MS = 10UL * 60UL * 1000UL;
 const unsigned long INTERVALO_CLIMA_MS = 15UL * 60UL * 1000UL;
-const unsigned long INTERVALO_BLYNK_MS = 2000;
+const unsigned long INTERVALO_BLYNK_MS = 100;
 const unsigned long INTERVALO_NOTIFICACAO_MS = 10UL * 60UL * 1000UL;
 
 float distanciaReferenciaVelocidade = -1.0;
@@ -116,7 +123,9 @@ NivelAlerta calcularNivelAlerta(float distancia, float velocidadeAproximacao) {
   RiscoClima riscoClima = calcularRiscoClima();
   float ajusteClima = 0.0;
 
-  if (riscoClima == CLIMA_ATENCAO) {
+  if (MODO_TESTE_VASILHA) {
+    ajusteClima = 0.0;
+  } else if (riscoClima == CLIMA_ATENCAO) {
     ajusteClima = 5.0;
   } else if (riscoClima == CLIMA_PERIGOSO) {
     ajusteClima = 10.0;
@@ -128,7 +137,7 @@ NivelAlerta calcularNivelAlerta(float distancia, float velocidadeAproximacao) {
   float velocidadeMedio = VELOCIDADE_ALERTA_MEDIO_CM_S;
   float velocidadeExtremo = VELOCIDADE_ALERTA_EXTREMO_CM_S;
 
-  if (riscoClima == CLIMA_PERIGOSO) {
+  if (!MODO_TESTE_VASILHA && riscoClima == CLIMA_PERIGOSO) {
     velocidadeMedio = 0.06;
     velocidadeExtremo = 0.12;
   }
@@ -265,13 +274,28 @@ void atualizarClima() {
   http.end();
 }
 
+float velocidadeParaBlynkCmMin() {
+  float velocidadeCmMin = velocidadeFiltrada * 60.0;
+
+  if (velocidadeCmMin < VELOCIDADE_MINIMA_EXIBICAO_CM_MIN) {
+    return 0.0;
+  }
+
+  if (MODO_TESTE_VASILHA && velocidadeCmMin > VELOCIDADE_MAXIMA_TESTE_CM_MIN) {
+    return VELOCIDADE_MAXIMA_TESTE_CM_MIN;
+  }
+
+  return velocidadeCmMin;
+}
+
 void enviarDadosBlynk() {
   Blynk.virtualWrite(V0, distanciaAtual);
-  Blynk.virtualWrite(V1, velocidadeFiltrada * 60.0);
+  Blynk.virtualWrite(V1, velocidadeParaBlynkCmMin());
   Blynk.virtualWrite(V2, nivelAtualTexto);
   Blynk.virtualWrite(V3, chanceChuva);
   Blynk.virtualWrite(V4, chuvaPrevistaMm);
   Blynk.virtualWrite(V5, ledBlynk);
+  Blynk.virtualWrite(V6, CIDADE_MONITORADA);
 }
 
 void notificarBlynkSeExtremo(NivelAlerta nivel) {
@@ -320,7 +344,6 @@ void loop() {
 
   // mede distancia
   float distancia = medirDistanciaCm();
-  distanciaAtual = distancia;
 
   if (distancia < 0) {
     Serial.println("Sem risco");
@@ -332,6 +355,15 @@ void loop() {
     delay(500);
     return;
   }
+
+  if (MODO_TESTE_VASILHA && distancia > DISTANCIA_MAXIMA_TESTE_CM) {
+    distancia = DISTANCIA_MAXIMA_TESTE_CM;
+    distanciaReferenciaVelocidade = distancia;
+    tempoReferenciaVelocidade = millis();
+    velocidadeFiltrada = 0.0;
+  }
+
+  distanciaAtual = distancia;
 
   unsigned long tempoAtual = millis();
   float velocidadeAproximacao = 0.0;
@@ -352,6 +384,10 @@ void loop() {
         ultimaSubidaAgua = tempoAtual;
       }
 
+      if (MODO_TESTE_VASILHA && velocidadeAproximacao > VELOCIDADE_MAXIMA_TESTE_CM_S) {
+        velocidadeAproximacao = VELOCIDADE_MAXIMA_TESTE_CM_S;
+      }
+
       velocidadeFiltrada = (PESO_FILTRO_VELOCIDADE * velocidadeAproximacao) +
                            ((1.0 - PESO_FILTRO_VELOCIDADE) * velocidadeFiltrada);
     }
@@ -363,7 +399,7 @@ void loop() {
   Serial.print("Distancia: ");
   Serial.print(distancia);
   Serial.print(" cm | Velocidade de aproximacao: ");
-  Serial.print(velocidadeFiltrada * 60.0);
+  Serial.print(velocidadeParaBlynkCmMin());
   Serial.print(" cm/min | Nivel: ");
   NivelAlerta nivelCalculado = calcularNivelAlerta(distancia, velocidadeFiltrada);
   NivelAlerta nivel = atualizarNivelComMemoria(nivelComMemoria, nivelCalculado, distancia);
